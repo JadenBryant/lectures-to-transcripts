@@ -14,6 +14,12 @@ from lecture_transcriber.pipeline import PipelineError, TranscriptJob, run_trans
 
 APP_TITLE = "Lecture Transcriber"
 DEFAULT_MODEL = "whisper-large-v3-turbo"
+WINDOW_BG = "#f5f5f7"
+FIELD_BG = "#ffffff"
+FIELD_DISABLED_BG = "#ececf1"
+TEXT_FG = "#1d1d1f"
+MUTED_FG = "#6e6e73"
+FIELD_BORDER = "#8e8e93"
 
 
 class LectureTranscriberApp(tk.Tk):
@@ -50,10 +56,65 @@ class LectureTranscriberApp(tk.Tk):
                 style.theme_use("vista")
             except tk.TclError:
                 pass
+        self.configure(background=WINDOW_BG)
         style.configure("TFrame", padding=0)
+        style.configure("TFrame", background=WINDOW_BG)
+        style.configure("TLabel", background=WINDOW_BG, foreground=TEXT_FG)
         style.configure("Header.TLabel", font=("TkDefaultFont", 18, "bold"))
         style.configure("Section.TLabel", font=("TkDefaultFont", 10, "bold"))
         style.configure("Primary.TButton", font=("TkDefaultFont", 10, "bold"))
+        style.configure(
+            "TEntry",
+            fieldbackground=FIELD_BG,
+            background=FIELD_BG,
+            foreground=TEXT_FG,
+            bordercolor=FIELD_BORDER,
+            lightcolor=FIELD_BORDER,
+            darkcolor=FIELD_BORDER,
+        )
+        style.map(
+            "TEntry",
+            fieldbackground=[("disabled", FIELD_DISABLED_BG), ("readonly", FIELD_DISABLED_BG)],
+            foreground=[("disabled", MUTED_FG), ("readonly", TEXT_FG)],
+        )
+        style.configure(
+            "TCombobox",
+            fieldbackground=FIELD_BG,
+            background=FIELD_BG,
+            foreground=TEXT_FG,
+            bordercolor=FIELD_BORDER,
+        )
+        style.map(
+            "TCombobox",
+            fieldbackground=[("disabled", FIELD_DISABLED_BG), ("readonly", FIELD_BG)],
+            foreground=[("disabled", MUTED_FG)],
+        )
+        style.configure(
+            "TSpinbox",
+            fieldbackground=FIELD_BG,
+            background=FIELD_BG,
+            foreground=TEXT_FG,
+            bordercolor=FIELD_BORDER,
+        )
+        style.map(
+            "TSpinbox",
+            fieldbackground=[("disabled", FIELD_DISABLED_BG), ("readonly", FIELD_DISABLED_BG)],
+            foreground=[("disabled", MUTED_FG)],
+        )
+
+    def _configure_text_field(self, widget: tk.Text) -> None:
+        widget.configure(
+            background=FIELD_BG,
+            foreground=TEXT_FG,
+            insertbackground=TEXT_FG,
+            selectbackground="#0a84ff",
+            selectforeground="#ffffff",
+            highlightbackground=FIELD_BORDER,
+            highlightcolor="#0a84ff",
+            highlightthickness=1,
+            relief="solid",
+            borderwidth=1,
+        )
 
     def _build_ui(self) -> None:
         self.columnconfigure(0, weight=1)
@@ -110,6 +171,7 @@ class LectureTranscriberApp(tk.Tk):
         urls_frame.columnconfigure(0, weight=1)
         urls_frame.rowconfigure(0, weight=1)
         self.urls_text = tk.Text(urls_frame, height=12, wrap="word", undo=True)
+        self._configure_text_field(self.urls_text)
         urls_scroll = ttk.Scrollbar(urls_frame, command=self.urls_text.yview)
         self.urls_text.configure(yscrollcommand=urls_scroll.set)
         self.urls_text.grid(row=0, column=0, sticky="nsew")
@@ -131,6 +193,7 @@ class LectureTranscriberApp(tk.Tk):
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
         self.log_text = tk.Text(log_frame, height=12, wrap="word", state="disabled")
+        self._configure_text_field(self.log_text)
         log_scroll = ttk.Scrollbar(log_frame, command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=log_scroll.set)
         self.log_text.grid(row=0, column=0, sticky="nsew")
@@ -200,6 +263,7 @@ class LectureTranscriberApp(tk.Tk):
         prompt_frame.columnconfigure(0, weight=1)
         prompt_frame.rowconfigure(0, weight=1)
         self.prompt_text = tk.Text(prompt_frame, height=6, wrap="word", undo=True)
+        self._configure_text_field(self.prompt_text)
         prompt_scroll = ttk.Scrollbar(prompt_frame, command=self.prompt_text.yview)
         self.prompt_text.configure(yscrollcommand=prompt_scroll.set)
         self.prompt_text.grid(row=0, column=0, sticky="nsew")
