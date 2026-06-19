@@ -20,6 +20,11 @@ FIELD_DISABLED_BG = "#ececf1"
 TEXT_FG = "#1d1d1f"
 MUTED_FG = "#6e6e73"
 FIELD_BORDER = "#8e8e93"
+CONTROL_BG = "#e9e9ed"
+CONTROL_ACTIVE_BG = "#d9d9df"
+CONTROL_PRESSED_BG = "#c9c9d0"
+ACCENT = "#0a84ff"
+ACCENT_ACTIVE = "#0071e3"
 
 
 class LectureTranscriberApp(tk.Tk):
@@ -51,18 +56,67 @@ class LectureTranscriberApp(tk.Tk):
 
     def _build_styles(self) -> None:
         style = ttk.Style(self)
-        if sys.platform == "win32":
-            try:
-                style.theme_use("vista")
-            except tk.TclError:
-                pass
+
+        # Native ttk themes can follow the OS appearance while ignoring some
+        # application colors. On macOS this creates dark controls on the light
+        # backgrounds below. Clam is available with Tk on every supported
+        # platform and allows the complete palette to remain internally
+        # consistent, regardless of the system appearance.
+        for theme in ("clam", "alt", "default"):
+            if theme in style.theme_names():
+                style.theme_use(theme)
+                break
+
         self.configure(background=WINDOW_BG)
-        style.configure("TFrame", padding=0)
-        style.configure("TFrame", background=WINDOW_BG)
+        self.option_add("*selectBackground", ACCENT)
+        self.option_add("*selectForeground", "#ffffff")
+
+        style.configure("TFrame", padding=0, background=WINDOW_BG)
         style.configure("TLabel", background=WINDOW_BG, foreground=TEXT_FG)
         style.configure("Header.TLabel", font=("TkDefaultFont", 18, "bold"))
         style.configure("Section.TLabel", font=("TkDefaultFont", 10, "bold"))
-        style.configure("Primary.TButton", font=("TkDefaultFont", 10, "bold"))
+        style.configure(
+            "TButton",
+            background=CONTROL_BG,
+            foreground=TEXT_FG,
+            bordercolor=FIELD_BORDER,
+            lightcolor=CONTROL_BG,
+            darkcolor=CONTROL_BG,
+            focuscolor=ACCENT,
+            padding=(8, 4),
+        )
+        style.map(
+            "TButton",
+            background=[("pressed", CONTROL_PRESSED_BG), ("active", CONTROL_ACTIVE_BG)],
+            foreground=[("disabled", MUTED_FG)],
+        )
+        style.configure(
+            "Primary.TButton",
+            font=("TkDefaultFont", 10, "bold"),
+            background=ACCENT,
+            foreground="#ffffff",
+            bordercolor=ACCENT_ACTIVE,
+            lightcolor=ACCENT,
+            darkcolor=ACCENT,
+        )
+        style.map(
+            "Primary.TButton",
+            background=[("pressed", ACCENT_ACTIVE), ("active", ACCENT_ACTIVE)],
+            foreground=[("disabled", "#d1d1d6")],
+        )
+        style.configure(
+            "TRadiobutton",
+            background=WINDOW_BG,
+            foreground=TEXT_FG,
+            indicatorbackground=FIELD_BG,
+            indicatorforeground=ACCENT,
+        )
+        style.map(
+            "TRadiobutton",
+            background=[("active", WINDOW_BG)],
+            foreground=[("disabled", MUTED_FG)],
+            indicatorbackground=[("selected", ACCENT), ("disabled", FIELD_DISABLED_BG)],
+        )
         style.configure(
             "TEntry",
             fieldbackground=FIELD_BG,
@@ -90,6 +144,23 @@ class LectureTranscriberApp(tk.Tk):
             foreground=[("disabled", MUTED_FG)],
         )
         style.configure(
+            "TScrollbar",
+            background=CONTROL_BG,
+            troughcolor=FIELD_DISABLED_BG,
+            bordercolor=WINDOW_BG,
+            arrowcolor=TEXT_FG,
+        )
+        style.map("TScrollbar", background=[("active", CONTROL_ACTIVE_BG)])
+        style.configure(
+            "TProgressbar",
+            background=ACCENT,
+            troughcolor=FIELD_DISABLED_BG,
+            bordercolor=FIELD_BORDER,
+            lightcolor=ACCENT,
+            darkcolor=ACCENT,
+        )
+        style.configure("TPanedwindow", background=WINDOW_BG)
+        style.configure(
             "TSpinbox",
             fieldbackground=FIELD_BG,
             background=FIELD_BG,
@@ -107,10 +178,10 @@ class LectureTranscriberApp(tk.Tk):
             background=FIELD_BG,
             foreground=TEXT_FG,
             insertbackground=TEXT_FG,
-            selectbackground="#0a84ff",
+            selectbackground=ACCENT,
             selectforeground="#ffffff",
             highlightbackground=FIELD_BORDER,
-            highlightcolor="#0a84ff",
+            highlightcolor=ACCENT,
             highlightthickness=1,
             relief="solid",
             borderwidth=1,
