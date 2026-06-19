@@ -359,7 +359,7 @@ class LectureTranscriberApp(tk.Tk):
             prompt=prompt,
             chunk_seconds=chunk_minutes * 60,
             keep_video_files=using_urls,
-            use_transcripts_subdir=using_urls,
+            use_transcripts_subdir=True,
         )
 
     def _run_worker(self, job: TranscriptJob) -> None:

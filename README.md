@@ -90,7 +90,7 @@ By default, the output folder is:
 ~/Documents/Lecture Transcripts
 ```
 
-In **Panopto URLs** mode, the app creates `transcripts/` and `videos/` inside the selected output folder.
+The app creates a `transcripts/` folder inside the selected output folder.
 
 Transcripts are written to:
 
@@ -100,13 +100,13 @@ Transcripts are written to:
 
 Each transcript includes a short header with the lecture title, source URL, and model.
 
-Downloaded lecture media is kept in:
+In **Panopto URLs** mode, downloaded lecture media is kept in:
 
 ```text
 ~/Documents/Lecture Transcripts/videos
 ```
 
-In **Video folder** mode, transcripts are written directly to the selected output folder. The app does not copy the source videos.
+In **Video folder** mode, the app does not copy the source videos.
 
 Audio chunks are temporary scratch files and are removed automatically after each lecture finishes.
 
