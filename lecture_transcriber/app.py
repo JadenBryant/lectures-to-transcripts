@@ -374,7 +374,12 @@ class LectureTranscriberApp(tk.Tk):
         folder_state = "disabled" if using_urls else "normal"
         cookies_state = "normal" if using_urls else "disabled"
 
-        self.urls_text.configure(state=url_state)
+        self.urls_text.configure(
+            state=url_state,
+            background=FIELD_BG if using_urls else FIELD_DISABLED_BG,
+            foreground=TEXT_FG if using_urls else MUTED_FG,
+            insertbackground=TEXT_FG if using_urls else MUTED_FG,
+        )
         self.input_dir_entry.configure(state=folder_state)
         self.input_dir_button.configure(state=folder_state)
         self.cookies_entry.configure(state=cookies_state)
