@@ -1,0 +1,11 @@
+.venv/
+.tmp/
+__pycache__/
+*.pyc
+dist/
+build/
+*.spec
+transcripts/
+work/
+.env
+.lecture-transcriber-state.json

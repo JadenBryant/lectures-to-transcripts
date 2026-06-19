@@ -1,0 +1,412 @@
+from __future__ import annotations
+
+import os
+import queue
+import subprocess
+import sys
+import threading
+import tkinter as tk
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
+
+from lecture_transcriber.pipeline import PipelineError, TranscriptJob, run_transcript_job
+
+
+APP_TITLE = "Lecture Transcriber"
+DEFAULT_MODEL = "whisper-large-v3-turbo"
+
+
+class LectureTranscriberApp(tk.Tk):
+    def __init__(self) -> None:
+        super().__init__()
+        self.title(APP_TITLE)
+        self.minsize(920, 680)
+
+        self.events: queue.Queue[tuple[str, object]] = queue.Queue()
+        self.cancel_event = threading.Event()
+        self.worker: threading.Thread | None = None
+        self.closing_after_cancel = False
+
+        self.source_mode_var = tk.StringVar(value="urls")
+        self.input_dir_var = tk.StringVar()
+        self.cookies_var = tk.StringVar()
+        self.api_key_var = tk.StringVar(value=os.environ.get("GROQ_API_KEY", ""))
+        self.output_var = tk.StringVar(value=str(Path.home() / "Documents" / "Lecture Transcripts"))
+        self.model_var = tk.StringVar(value=DEFAULT_MODEL)
+        self.language_var = tk.StringVar(value="en")
+        self.chunk_minutes_var = tk.IntVar(value=15)
+        self.status_var = tk.StringVar(value="Ready")
+
+        self._build_styles()
+        self._build_ui()
+        self._update_source_mode()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._poll_events()
+
+    def _build_styles(self) -> None:
+        style = ttk.Style(self)
+        if sys.platform == "win32":
+            try:
+                style.theme_use("vista")
+            except tk.TclError:
+                pass
+        style.configure("TFrame", padding=0)
+        style.configure("Header.TLabel", font=("TkDefaultFont", 18, "bold"))
+        style.configure("Section.TLabel", font=("TkDefaultFont", 10, "bold"))
+        style.configure("Primary.TButton", font=("TkDefaultFont", 10, "bold"))
+
+    def _build_ui(self) -> None:
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1)
+
+        header = ttk.Frame(self, padding=(18, 16, 18, 8))
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(0, weight=1)
+        ttk.Label(header, text=APP_TITLE, style="Header.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(header, textvariable=self.status_var).grid(row=0, column=1, sticky="e")
+
+        content = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
+        content.grid(row=1, column=0, sticky="nsew", padx=18, pady=8)
+
+        left = ttk.Frame(content, padding=(0, 0, 12, 0))
+        right = ttk.Frame(content, padding=(12, 0, 0, 0))
+        content.add(left, weight=3)
+        content.add(right, weight=2)
+
+        left.columnconfigure(0, weight=1)
+        left.rowconfigure(3, weight=1)
+        right.columnconfigure(0, weight=1)
+        right.rowconfigure(7, weight=1)
+
+        ttk.Label(left, text="Source", style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        source_frame = ttk.Frame(left)
+        source_frame.grid(row=1, column=0, sticky="ew", pady=(6, 12))
+        source_frame.columnconfigure(1, weight=1)
+        self.urls_radio = ttk.Radiobutton(
+            source_frame,
+            text="Panopto URLs",
+            value="urls",
+            variable=self.source_mode_var,
+            command=self._update_source_mode,
+        )
+        self.folder_radio = ttk.Radiobutton(
+            source_frame,
+            text="Video folder",
+            value="folder",
+            variable=self.source_mode_var,
+            command=self._update_source_mode,
+        )
+        self.input_dir_entry = ttk.Entry(source_frame, textvariable=self.input_dir_var)
+        self.input_dir_button = ttk.Button(source_frame, text="Browse", command=self._choose_input_folder)
+        self.urls_radio.grid(row=0, column=0, sticky="w")
+        self.folder_radio.grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.input_dir_entry.grid(row=1, column=1, sticky="ew", padx=(8, 6), pady=(6, 0))
+        self.input_dir_button.grid(row=1, column=2, sticky="e", pady=(6, 0))
+
+        self.urls_label = ttk.Label(left, text="Panopto URLs", style="Section.TLabel")
+        self.urls_label.grid(row=2, column=0, sticky="w")
+        urls_frame = ttk.Frame(left)
+        urls_frame.grid(row=3, column=0, sticky="nsew", pady=(6, 12))
+        urls_frame.columnconfigure(0, weight=1)
+        urls_frame.rowconfigure(0, weight=1)
+        self.urls_text = tk.Text(urls_frame, height=12, wrap="word", undo=True)
+        urls_scroll = ttk.Scrollbar(urls_frame, command=self.urls_text.yview)
+        self.urls_text.configure(yscrollcommand=urls_scroll.set)
+        self.urls_text.grid(row=0, column=0, sticky="nsew")
+        urls_scroll.grid(row=0, column=1, sticky="ns")
+
+        ttk.Label(left, text="Progress", style="Section.TLabel").grid(row=4, column=0, sticky="w")
+        self.progress = ttk.Progressbar(left, mode="determinate", maximum=100)
+        self.progress.grid(row=5, column=0, sticky="ew", pady=(6, 12))
+
+        log_header = ttk.Frame(left)
+        log_header.grid(row=6, column=0, sticky="ew")
+        log_header.columnconfigure(0, weight=1)
+        ttk.Label(log_header, text="Log", style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Button(log_header, text="Clear", command=self._clear_log).grid(row=0, column=1, sticky="e")
+
+        log_frame = ttk.Frame(left)
+        log_frame.grid(row=7, column=0, sticky="nsew", pady=(6, 0))
+        left.rowconfigure(7, weight=1)
+        log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(0, weight=1)
+        self.log_text = tk.Text(log_frame, height=12, wrap="word", state="disabled")
+        log_scroll = ttk.Scrollbar(log_frame, command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=log_scroll.set)
+        self.log_text.grid(row=0, column=0, sticky="nsew")
+        log_scroll.grid(row=0, column=1, sticky="ns")
+
+        self._build_settings(right)
+
+        footer = ttk.Frame(self, padding=(18, 8, 18, 18))
+        footer.grid(row=2, column=0, sticky="ew")
+        footer.columnconfigure(0, weight=1)
+        self.start_button = ttk.Button(
+            footer,
+            text="Start Transcription",
+            style="Primary.TButton",
+            command=self._start,
+        )
+        self.cancel_button = ttk.Button(footer, text="Cancel", command=self._cancel, state="disabled")
+        self.open_output_button = ttk.Button(footer, text="Open Output Folder", command=self._open_output_folder)
+        self.open_output_button.grid(row=0, column=0, sticky="w")
+        self.cancel_button.grid(row=0, column=1, padx=(0, 8))
+        self.start_button.grid(row=0, column=2)
+
+    def _build_settings(self, parent: ttk.Frame) -> None:
+        ttk.Label(parent, text="Settings", style="Section.TLabel").grid(row=0, column=0, sticky="w")
+
+        fields = ttk.Frame(parent)
+        fields.grid(row=1, column=0, sticky="ew", pady=(6, 12))
+        fields.columnconfigure(1, weight=1)
+
+        ttk.Label(fields, text="Cookies").grid(row=0, column=0, sticky="w", pady=4)
+        self.cookies_entry = ttk.Entry(fields, textvariable=self.cookies_var)
+        self.cookies_button = ttk.Button(fields, text="Browse", command=self._choose_cookies)
+        self.cookies_entry.grid(row=0, column=1, sticky="ew", padx=(8, 6))
+        self.cookies_button.grid(row=0, column=2, sticky="e")
+
+        ttk.Label(fields, text="Groq API key").grid(row=1, column=0, sticky="w", pady=4)
+        self.api_entry = ttk.Entry(fields, textvariable=self.api_key_var, show="*")
+        self.api_entry.grid(row=1, column=1, sticky="ew", padx=(8, 6))
+        self.reveal_button = ttk.Button(fields, text="Show", command=self._toggle_api_key)
+        self.reveal_button.grid(row=1, column=2, sticky="e")
+
+        ttk.Label(fields, text="Output folder").grid(row=2, column=0, sticky="w", pady=4)
+        ttk.Entry(fields, textvariable=self.output_var).grid(row=2, column=1, sticky="ew", padx=(8, 6))
+        ttk.Button(fields, text="Browse", command=self._choose_output).grid(row=2, column=2, sticky="e")
+
+        ttk.Label(fields, text="Model").grid(row=3, column=0, sticky="w", pady=4)
+        model_box = ttk.Combobox(
+            fields,
+            textvariable=self.model_var,
+            values=("whisper-large-v3-turbo", "whisper-large-v3"),
+        )
+        model_box.grid(row=3, column=1, columnspan=2, sticky="ew", padx=(8, 0))
+
+        ttk.Label(fields, text="Language").grid(row=4, column=0, sticky="w", pady=4)
+        ttk.Entry(fields, textvariable=self.language_var).grid(
+            row=4, column=1, columnspan=2, sticky="ew", padx=(8, 0)
+        )
+
+        ttk.Label(fields, text="Chunk minutes").grid(row=5, column=0, sticky="w", pady=4)
+        ttk.Spinbox(fields, from_=1, to=60, textvariable=self.chunk_minutes_var, width=8).grid(
+            row=5, column=1, sticky="w", padx=(8, 0)
+        )
+
+        ttk.Label(parent, text="Prompt", style="Section.TLabel").grid(row=2, column=0, sticky="w")
+        prompt_frame = ttk.Frame(parent)
+        prompt_frame.grid(row=3, column=0, sticky="nsew", pady=(6, 12))
+        prompt_frame.columnconfigure(0, weight=1)
+        prompt_frame.rowconfigure(0, weight=1)
+        self.prompt_text = tk.Text(prompt_frame, height=6, wrap="word", undo=True)
+        prompt_scroll = ttk.Scrollbar(prompt_frame, command=self.prompt_text.yview)
+        self.prompt_text.configure(yscrollcommand=prompt_scroll.set)
+        self.prompt_text.grid(row=0, column=0, sticky="nsew")
+        prompt_scroll.grid(row=0, column=1, sticky="ns")
+
+    def _choose_cookies(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Choose cookies file",
+            filetypes=(("Text files", "*.txt"), ("All files", "*.*")),
+        )
+        if path:
+            self.cookies_var.set(path)
+
+    def _choose_input_folder(self) -> None:
+        path = filedialog.askdirectory(title="Choose lecture video folder")
+        if path:
+            self.input_dir_var.set(path)
+            self.source_mode_var.set("folder")
+            self._update_source_mode()
+
+    def _choose_output(self) -> None:
+        path = filedialog.askdirectory(title="Choose output folder")
+        if path:
+            self.output_var.set(path)
+
+    def _toggle_api_key(self) -> None:
+        if self.api_entry.cget("show") == "*":
+            self.api_entry.configure(show="")
+            self.reveal_button.configure(text="Hide")
+        else:
+            self.api_entry.configure(show="*")
+            self.reveal_button.configure(text="Show")
+
+    def _update_source_mode(self) -> None:
+        using_urls = self.source_mode_var.get() == "urls"
+        url_state = "normal" if using_urls else "disabled"
+        folder_state = "disabled" if using_urls else "normal"
+        cookies_state = "normal" if using_urls else "disabled"
+
+        self.urls_text.configure(state=url_state)
+        self.input_dir_entry.configure(state=folder_state)
+        self.input_dir_button.configure(state=folder_state)
+        self.cookies_entry.configure(state=cookies_state)
+        self.cookies_button.configure(state=cookies_state)
+
+    def _start(self) -> None:
+        try:
+            job = self._job_from_form()
+        except PipelineError as exc:
+            messagebox.showerror(APP_TITLE, str(exc))
+            return
+
+        self.cancel_event.clear()
+        self._set_running(True)
+        self.progress.configure(value=0)
+        self.status_var.set("Running")
+        self._log("Starting transcription job.")
+
+        self.worker = threading.Thread(target=self._run_worker, args=(job,), daemon=True)
+        self.worker.start()
+
+    def _job_from_form(self) -> TranscriptJob:
+        urls = [
+            line.strip()
+            for line in self.urls_text.get("1.0", "end").splitlines()
+            if line.strip()
+        ]
+        cookies_text = self.cookies_var.get().strip()
+        input_dir_text = self.input_dir_var.get().strip()
+        output_text = self.output_var.get().strip()
+        prompt = self.prompt_text.get("1.0", "end").strip()
+        using_urls = self.source_mode_var.get() == "urls"
+
+        if not output_text:
+            raise PipelineError("Choose an output folder.")
+        if using_urls and not urls:
+            raise PipelineError("Add at least one Panopto URL.")
+        if not using_urls and not input_dir_text:
+            raise PipelineError("Choose a folder of lecture videos.")
+        try:
+            chunk_minutes = int(self.chunk_minutes_var.get())
+        except (tk.TclError, ValueError) as exc:
+            raise PipelineError("Chunk minutes must be a whole number.") from exc
+
+        return TranscriptJob(
+            urls=urls if using_urls else [],
+            input_dir=None if using_urls else Path(input_dir_text).expanduser(),
+            groq_api_key=self.api_key_var.get().strip(),
+            output_dir=Path(output_text).expanduser(),
+            cookies_file=Path(cookies_text).expanduser() if using_urls and cookies_text else None,
+            model=self.model_var.get().strip() or DEFAULT_MODEL,
+            language=self.language_var.get().strip(),
+            prompt=prompt,
+            chunk_seconds=chunk_minutes * 60,
+            keep_video_files=using_urls,
+            use_transcripts_subdir=using_urls,
+        )
+
+    def _run_worker(self, job: TranscriptJob) -> None:
+        try:
+            results = run_transcript_job(
+                job,
+                log=lambda message: self.events.put(("log", message)),
+                progress=lambda current, total, message: self.events.put(
+                    ("progress", (current, total, message))
+                ),
+                cancel_event=self.cancel_event,
+            )
+        except PipelineError as exc:
+            if str(exc) == "Cancelled.":
+                self.events.put(("cancelled", exc))
+            else:
+                self.events.put(("error", exc))
+        except Exception as exc:
+            self.events.put(("error", exc))
+        else:
+            self.events.put(("done", results))
+
+    def _cancel(self) -> None:
+        self.cancel_event.set()
+        self.status_var.set("Cancelling")
+        self._log("Cancellation requested.")
+
+    def _on_close(self) -> None:
+        if self.worker and self.worker.is_alive():
+            should_close = messagebox.askyesno(
+                APP_TITLE,
+                "A transcription job is still running. Cancel it and close the app?",
+            )
+            if not should_close:
+                return
+            self.closing_after_cancel = True
+            self._cancel()
+            self._set_running(True)
+            return
+        self.destroy()
+
+    def _poll_events(self) -> None:
+        while True:
+            try:
+                kind, payload = self.events.get_nowait()
+            except queue.Empty:
+                break
+
+            if kind == "log":
+                self._log(str(payload))
+            elif kind == "progress":
+                current, total, message = payload
+                percent = 0 if total == 0 else int((current / total) * 100)
+                self.progress.configure(value=percent)
+                self.status_var.set(str(message))
+            elif kind == "done":
+                self._set_running(False)
+                self.progress.configure(value=100)
+                results = payload
+                count = len(results)
+                self.status_var.set(f"Done: {count} transcript(s)")
+                self._log(f"Finished. Wrote {count} transcript(s).")
+                if self.closing_after_cancel:
+                    self.destroy()
+                    return
+                messagebox.showinfo(APP_TITLE, f"Wrote {count} transcript(s).")
+            elif kind == "cancelled":
+                self._set_running(False)
+                self.status_var.set("Cancelled")
+                self._log("Cancelled.")
+                if self.closing_after_cancel:
+                    self.destroy()
+                    return
+            elif kind == "error":
+                self._set_running(False)
+                self.status_var.set("Error")
+                message = str(payload)
+                self._log(message)
+                if self.closing_after_cancel:
+                    self.destroy()
+                    return
+                messagebox.showerror(APP_TITLE, message)
+
+        self.after(150, self._poll_events)
+
+    def _set_running(self, running: bool) -> None:
+        self.start_button.configure(state="disabled" if running else "normal")
+        self.cancel_button.configure(state="normal" if running else "disabled")
+
+    def _log(self, message: str) -> None:
+        self.log_text.configure(state="normal")
+        self.log_text.insert("end", message.rstrip() + "\n")
+        self.log_text.see("end")
+        self.log_text.configure(state="disabled")
+
+    def _clear_log(self) -> None:
+        self.log_text.configure(state="normal")
+        self.log_text.delete("1.0", "end")
+        self.log_text.configure(state="disabled")
+
+    def _open_output_folder(self) -> None:
+        path = Path(self.output_var.get().strip() or ".").expanduser()
+        path.mkdir(parents=True, exist_ok=True)
+        if sys.platform == "win32":
+            os.startfile(path)  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])
+        else:
+            subprocess.Popen(["xdg-open", str(path)])
+
+
+def main() -> None:
+    app = LectureTranscriberApp()
+    app.mainloop()

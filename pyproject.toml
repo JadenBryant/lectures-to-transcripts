@@ -1,0 +1,16 @@
+[project]
+name = "lectures-to-transcripts"
+version = "0.1.0"
+description = "Cross-platform GUI for downloading Panopto lecture videos and transcribing them with Groq."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "groq>=0.9.0",
+  "yt-dlp>=2025.1.1",
+]
+
+[project.scripts]
+lecture-transcriber = "lecture_transcriber.app:main"
+
+[tool.pyinstaller]
+entry = "lecture_transcriber/__main__.py"
