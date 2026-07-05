@@ -150,7 +150,8 @@ The output will be in `dist/`. `ffmpeg` still needs to be installed separately u
 - You can increase or decrease chunk minutes in the GUI.
 - The app keeps Panopto downloads, but does not copy local source videos and does not keep chunk files.
 - Completed lectures are skipped on rerun when the same output folder and transcription settings are used.
-- The Groq API key is only kept in memory while the app is running. It is not written to disk by this app.
+- The app remembers the last used cookies file and Groq API key in its user config file. If the saved cookies path is missing, it is forgotten and the field starts blank. If Groq rejects the saved API key, the key is forgotten so you can enter a new one.
+- The saved API key is stored as plain text in the current user's config directory.
 
 ## References
 

@@ -4,6 +4,7 @@ import os
 import queue
 import subprocess
 import sys
+import json
 import threading
 import tkinter as tk
 from pathlib import Path
@@ -25,6 +26,86 @@ CONTROL_ACTIVE_BG = "#d9d9df"
 CONTROL_PRESSED_BG = "#c9c9d0"
 ACCENT = "#0a84ff"
 ACCENT_ACTIVE = "#0071e3"
+SETTINGS_FILENAME = "settings.json"
+
+
+def _settings_dir() -> Path:
+    if sys.platform == "win32":
+        base = os.environ.get("APPDATA")
+        if base:
+            return Path(base) / "LectureTranscriber"
+    elif sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "LectureTranscriber"
+
+    base = os.environ.get("XDG_CONFIG_HOME")
+    if base:
+        return Path(base) / "lecture-transcriber"
+    return Path.home() / ".config" / "lecture-transcriber"
+
+
+SETTINGS_PATH = _settings_dir() / SETTINGS_FILENAME
+
+
+def _load_settings() -> dict[str, str]:
+    try:
+        data = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(key): str(value) for key, value in data.items() if isinstance(value, str)}
+
+
+def _write_settings(settings: dict[str, str]) -> None:
+    try:
+        SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = SETTINGS_PATH.with_suffix(f"{SETTINGS_PATH.suffix}.tmp")
+        temp_path.write_text(json.dumps(settings, indent=2, sort_keys=True), encoding="utf-8")
+        temp_path.replace(SETTINGS_PATH)
+    except OSError:
+        # Remembering these fields is helpful, but it should never block a job.
+        pass
+
+
+def _looks_like_invalid_api_key_error(error: object) -> bool:
+    status_code = getattr(error, "status_code", None)
+    if status_code in {401, 403}:
+        return True
+    name = type(error).__name__.lower()
+    message = str(error).lower()
+    return (
+        "authentication" in name
+        or "unauthorized" in name
+        or "permissiondenied" in name
+        or "invalid api key" in message
+        or "incorrect api key" in message
+        or "unauthorized" in message
+        or "forbidden" in message
+    )
+
+
+def _looks_like_invalid_cookies_error(error: object) -> bool:
+    name = type(error).__name__.lower()
+    message = str(error).lower()
+    came_from_downloader = (
+        "download" in name
+        or "yt-dlp" in message
+        or "cookie" in message
+        or "cookies" in message
+    )
+    return came_from_downloader and any(
+        marker in message
+        for marker in (
+            "cookie",
+            "cookies",
+            "login",
+            "sign in",
+            "signin",
+            "unauthorized",
+            "forbidden",
+            "private",
+        )
+    )
 
 
 class LectureTranscriberApp(tk.Tk):
@@ -37,11 +118,15 @@ class LectureTranscriberApp(tk.Tk):
         self.cancel_event = threading.Event()
         self.worker: threading.Thread | None = None
         self.closing_after_cancel = False
+        self.settings = _load_settings()
+        had_saved_cookies = bool(self.settings.get("cookies_file", "").strip())
+        saved_cookies = self._valid_saved_cookies()
+        saved_api_key = os.environ.get("GROQ_API_KEY") or self.settings.get("groq_api_key", "")
 
         self.source_mode_var = tk.StringVar(value="urls")
         self.input_dir_var = tk.StringVar()
-        self.cookies_var = tk.StringVar()
-        self.api_key_var = tk.StringVar(value=os.environ.get("GROQ_API_KEY", ""))
+        self.cookies_var = tk.StringVar(value=saved_cookies)
+        self.api_key_var = tk.StringVar(value=saved_api_key)
         self.output_var = tk.StringVar(value=str(Path.home() / "Documents" / "Lecture Transcripts"))
         self.model_var = tk.StringVar(value=DEFAULT_MODEL)
         self.language_var = tk.StringVar(value="en")
@@ -53,6 +138,45 @@ class LectureTranscriberApp(tk.Tk):
         self._update_source_mode()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._poll_events()
+
+        if had_saved_cookies and not saved_cookies:
+            self._log("Saved cookies file was not found. Choose a new cookies file if the video requires one.")
+
+    def _valid_saved_cookies(self) -> str:
+        saved_cookies = self.settings.get("cookies_file", "").strip()
+        if not saved_cookies:
+            return ""
+
+        path = Path(saved_cookies).expanduser()
+        if path.is_file():
+            return saved_cookies
+
+        self.settings.pop("cookies_file", None)
+        _write_settings(self.settings)
+        return ""
+
+    def _remember_settings(self, job: TranscriptJob) -> None:
+        settings = dict(self.settings)
+        if job.groq_api_key.strip():
+            settings["groq_api_key"] = job.groq_api_key.strip()
+        else:
+            settings.pop("groq_api_key", None)
+
+        if job.cookies_file is not None:
+            settings["cookies_file"] = str(job.cookies_file)
+        elif job.urls:
+            settings.pop("cookies_file", None)
+
+        self.settings = settings
+        _write_settings(settings)
+
+    def _forget_saved_api_key(self) -> None:
+        self.settings.pop("groq_api_key", None)
+        _write_settings(self.settings)
+
+    def _forget_saved_cookies(self) -> None:
+        self.settings.pop("cookies_file", None)
+        _write_settings(self.settings)
 
     def _build_styles(self) -> None:
         style = ttk.Style(self)
@@ -391,6 +515,7 @@ class LectureTranscriberApp(tk.Tk):
         except PipelineError as exc:
             messagebox.showerror(APP_TITLE, str(exc))
             return
+        self._remember_settings(job)
 
         self.cancel_event.clear()
         self._set_running(True)
@@ -419,6 +544,10 @@ class LectureTranscriberApp(tk.Tk):
             raise PipelineError("Add at least one Panopto URL.")
         if not using_urls and not input_dir_text:
             raise PipelineError("Choose a folder of lecture videos.")
+        if using_urls and cookies_text and not Path(cookies_text).expanduser().is_file():
+            self._forget_saved_cookies()
+            self.cookies_var.set("")
+            raise PipelineError(f"Cookies file does not exist: {Path(cookies_text).expanduser()}")
         try:
             chunk_minutes = int(self.chunk_minutes_var.get())
         except (tk.TclError, ValueError) as exc:
@@ -512,7 +641,7 @@ class LectureTranscriberApp(tk.Tk):
             elif kind == "error":
                 self._set_running(False)
                 self.status_var.set("Error")
-                message = str(payload)
+                message = self._handle_failure(payload)
                 self._log(message)
                 if self.closing_after_cancel:
                     self.destroy()
@@ -520,6 +649,20 @@ class LectureTranscriberApp(tk.Tk):
                 messagebox.showerror(APP_TITLE, message)
 
         self.after(150, self._poll_events)
+
+    def _handle_failure(self, error: object) -> str:
+        message = str(error)
+        if _looks_like_invalid_api_key_error(error):
+            self._forget_saved_api_key()
+            if os.environ.get("GROQ_API_KEY") is None:
+                self.api_key_var.set("")
+            return f"{message}\n\nThe Groq API key was not accepted. Any saved API key has been forgotten."
+
+        if _looks_like_invalid_cookies_error(error):
+            self._forget_saved_cookies()
+            return f"{message}\n\nThe saved cookies file may be expired or invalid and has been forgotten."
+
+        return message
 
     def _set_running(self, running: bool) -> None:
         self.start_button.configure(state="disabled" if running else "normal")
