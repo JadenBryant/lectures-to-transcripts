@@ -92,6 +92,13 @@ def _settings_string_list(settings: dict[str, object], key: str) -> list[str]:
     return [item for item in value if isinstance(item, str)]
 
 
+def _settings_bool(settings: dict[str, object], key: str, default: bool) -> bool:
+    value = settings.get(key)
+    if isinstance(value, bool):
+        return value
+    return default
+
+
 def _dedupe_recent_paths(paths: list[str]) -> list[str]:
     recent_paths: list[str] = []
     seen: set[str] = set()
@@ -165,12 +172,14 @@ class LectureTranscriberApp(tk.Tk):
         saved_cookies = self._valid_saved_cookies()
         saved_api_key = os.environ.get("GROQ_API_KEY") or _settings_string(self.settings, "groq_api_key")
         self.output_history = _dedupe_recent_paths(_settings_string_list(self.settings, "output_history"))
+        save_downloaded_videos = _settings_bool(self.settings, "save_downloaded_videos", True)
 
         self.source_mode_var = tk.StringVar(value="urls")
         self.input_dir_var = tk.StringVar()
         self.cookies_var = tk.StringVar(value=saved_cookies)
         self.api_key_var = tk.StringVar(value=saved_api_key)
         self.output_var = tk.StringVar(value=_default_output_dir())
+        self.save_downloaded_videos_var = tk.BooleanVar(value=save_downloaded_videos)
         self.model_var = tk.StringVar(value=DEFAULT_MODEL)
         self.language_var = tk.StringVar(value="en")
         self.chunk_minutes_var = tk.IntVar(value=15)
@@ -213,6 +222,7 @@ class LectureTranscriberApp(tk.Tk):
         output_dir = str(job.output_dir)
         self.output_history = _dedupe_recent_paths([output_dir, *self.output_history])
         settings["output_history"] = self.output_history
+        settings["save_downloaded_videos"] = self.save_downloaded_videos_var.get()
         self._refresh_output_history()
 
         self.settings = settings
@@ -492,22 +502,29 @@ class LectureTranscriberApp(tk.Tk):
         self.output_box.grid(row=2, column=1, sticky="ew", padx=(8, 6))
         ttk.Button(fields, text="Browse", command=self._choose_output).grid(row=2, column=2, sticky="e")
 
-        ttk.Label(fields, text="Model").grid(row=3, column=0, sticky="w", pady=4)
+        self.save_videos_check = ttk.Checkbutton(
+            fields,
+            text="Save downloaded videos",
+            variable=self.save_downloaded_videos_var,
+        )
+        self.save_videos_check.grid(row=3, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=4)
+
+        ttk.Label(fields, text="Model").grid(row=4, column=0, sticky="w", pady=4)
         model_box = ttk.Combobox(
             fields,
             textvariable=self.model_var,
             values=("whisper-large-v3-turbo", "whisper-large-v3"),
         )
-        model_box.grid(row=3, column=1, columnspan=2, sticky="ew", padx=(8, 0))
+        model_box.grid(row=4, column=1, columnspan=2, sticky="ew", padx=(8, 0))
 
-        ttk.Label(fields, text="Language").grid(row=4, column=0, sticky="w", pady=4)
+        ttk.Label(fields, text="Language").grid(row=5, column=0, sticky="w", pady=4)
         ttk.Entry(fields, textvariable=self.language_var).grid(
-            row=4, column=1, columnspan=2, sticky="ew", padx=(8, 0)
+            row=5, column=1, columnspan=2, sticky="ew", padx=(8, 0)
         )
 
-        ttk.Label(fields, text="Chunk minutes").grid(row=5, column=0, sticky="w", pady=4)
+        ttk.Label(fields, text="Chunk minutes").grid(row=6, column=0, sticky="w", pady=4)
         ttk.Spinbox(fields, from_=1, to=60, textvariable=self.chunk_minutes_var, width=8).grid(
-            row=5, column=1, sticky="w", padx=(8, 0)
+            row=6, column=1, sticky="w", padx=(8, 0)
         )
 
         ttk.Label(parent, text="Prompt", style="Section.TLabel").grid(row=2, column=0, sticky="w")
@@ -566,6 +583,7 @@ class LectureTranscriberApp(tk.Tk):
         self.input_dir_button.configure(state=folder_state)
         self.cookies_entry.configure(state=cookies_state)
         self.cookies_button.configure(state=cookies_state)
+        self.save_videos_check.configure(state="normal" if using_urls else "disabled")
 
     def _start(self) -> None:
         try:
@@ -621,7 +639,7 @@ class LectureTranscriberApp(tk.Tk):
             language=self.language_var.get().strip(),
             prompt=prompt,
             chunk_seconds=chunk_minutes * 60,
-            keep_video_files=using_urls,
+            keep_video_files=using_urls and self.save_downloaded_videos_var.get(),
             use_transcripts_subdir=True,
         )
 

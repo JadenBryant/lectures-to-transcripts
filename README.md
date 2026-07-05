@@ -7,7 +7,7 @@ The app lets you choose a `yt-dlp` cookies file, enter a Groq API key, paste one
 ## What It Does
 
 1. Downloads each Panopto video with `yt-dlp`, or reads local media from a folder.
-2. Saves downloaded Panopto media in `videos/`, but does not copy already-downloaded local media.
+2. Optionally saves downloaded Panopto media in `videos/`, but does not copy already-downloaded local media.
 3. Converts the media into temporary mono MP3 chunks with `ffmpeg`.
 4. Sends each chunk to Groq speech-to-text.
 5. Combines the chunk transcripts into a single text file.
@@ -108,7 +108,7 @@ Transcripts are written to:
 
 Each transcript includes a short header with the lecture title, source URL, and model.
 
-In **Panopto URLs** mode, downloaded lecture media is kept in:
+In **Panopto URLs** mode, downloaded lecture media is kept when **Save downloaded videos** is enabled:
 
 ```text
 ~/Documents/Lecture Transcripts/videos
@@ -156,7 +156,7 @@ The output will be in `dist/`. `ffmpeg` still needs to be installed separately u
 
 - The Groq direct upload limit is 25 MB on the free tier, so the app uses 15-minute 48 kbps chunks by default.
 - You can increase or decrease chunk minutes in the GUI.
-- The app keeps Panopto downloads, but does not copy local source videos and does not keep chunk files.
+- The app can keep Panopto downloads, but does not copy local source videos and does not keep chunk files.
 - Completed lectures are skipped on rerun when the same output folder and transcription settings are used.
 - The app remembers the last used cookies file and Groq API key in its user config file. If the saved cookies path is missing, it is forgotten and the field starts blank. If Groq rejects the saved API key, the key is forgotten so you can enter a new one.
 - The output folder defaults to `~/Documents/Lecture Transcripts`, and the output folder dropdown remembers the last 10 folders used for transcripts.
