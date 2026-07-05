@@ -5,6 +5,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -347,6 +348,12 @@ def _require_command(command: str) -> None:
         )
 
 
+def _hidden_subprocess_kwargs() -> dict:
+    if sys.platform != "win32":
+        return {}
+    return {"creationflags": subprocess.CREATE_NO_WINDOW}
+
+
 def _has_audio_stream(media_path: Path) -> bool:
     ffprobe_command = shutil.which("ffprobe")
     if ffprobe_command is None:
@@ -371,6 +378,7 @@ def _has_audio_stream(media_path: Path) -> bool:
         text=True,
         encoding="utf-8",
         errors="replace",
+        **_hidden_subprocess_kwargs(),
     )
     return "audio" in process.stdout.lower()
 
@@ -579,6 +587,7 @@ def _run_process(command: list[str], cancel_event: threading.Event) -> None:
         text=True,
         encoding="utf-8",
         errors="replace",
+        **_hidden_subprocess_kwargs(),
     )
     output_tail: list[str] = []
 
@@ -624,6 +633,7 @@ def _run_logged_process(
         text=True,
         encoding="utf-8",
         errors="replace",
+        **_hidden_subprocess_kwargs(),
     )
     output_tail: list[str] = []
     last_progress_bucket: int | None = None
