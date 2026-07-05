@@ -27,6 +27,7 @@ CONTROL_PRESSED_BG = "#c9c9d0"
 ACCENT = "#0a84ff"
 ACCENT_ACTIVE = "#0071e3"
 SETTINGS_FILENAME = "settings.json"
+MAX_OUTPUT_HISTORY = 10
 
 
 def _settings_dir() -> Path:
@@ -46,17 +47,27 @@ def _settings_dir() -> Path:
 SETTINGS_PATH = _settings_dir() / SETTINGS_FILENAME
 
 
-def _load_settings() -> dict[str, str]:
+def _default_output_dir() -> str:
+    return str(Path.home() / "Documents" / "Lecture Transcripts")
+
+
+def _load_settings() -> dict[str, object]:
     try:
         data = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
     if not isinstance(data, dict):
         return {}
-    return {str(key): str(value) for key, value in data.items() if isinstance(value, str)}
+    settings: dict[str, object] = {}
+    for key, value in data.items():
+        if isinstance(value, str):
+            settings[str(key)] = value
+        elif isinstance(value, list) and all(isinstance(item, str) for item in value):
+            settings[str(key)] = list(value)
+    return settings
 
 
-def _write_settings(settings: dict[str, str]) -> None:
+def _write_settings(settings: dict[str, object]) -> None:
     try:
         SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
         temp_path = SETTINGS_PATH.with_suffix(f"{SETTINGS_PATH.suffix}.tmp")
@@ -65,6 +76,37 @@ def _write_settings(settings: dict[str, str]) -> None:
     except OSError:
         # Remembering these fields is helpful, but it should never block a job.
         pass
+
+
+def _settings_string(settings: dict[str, object], key: str) -> str:
+    value = settings.get(key)
+    if isinstance(value, str):
+        return value
+    return ""
+
+
+def _settings_string_list(settings: dict[str, object], key: str) -> list[str]:
+    value = settings.get(key)
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
+def _dedupe_recent_paths(paths: list[str]) -> list[str]:
+    recent_paths: list[str] = []
+    seen: set[str] = set()
+    for path_text in paths:
+        cleaned = path_text.strip()
+        if not cleaned:
+            continue
+        key = str(Path(cleaned).expanduser()).casefold() if sys.platform == "win32" else str(Path(cleaned).expanduser())
+        if key in seen:
+            continue
+        seen.add(key)
+        recent_paths.append(cleaned)
+        if len(recent_paths) == MAX_OUTPUT_HISTORY:
+            break
+    return recent_paths
 
 
 def _looks_like_invalid_api_key_error(error: object) -> bool:
@@ -119,15 +161,16 @@ class LectureTranscriberApp(tk.Tk):
         self.worker: threading.Thread | None = None
         self.closing_after_cancel = False
         self.settings = _load_settings()
-        had_saved_cookies = bool(self.settings.get("cookies_file", "").strip())
+        had_saved_cookies = bool(_settings_string(self.settings, "cookies_file").strip())
         saved_cookies = self._valid_saved_cookies()
-        saved_api_key = os.environ.get("GROQ_API_KEY") or self.settings.get("groq_api_key", "")
+        saved_api_key = os.environ.get("GROQ_API_KEY") or _settings_string(self.settings, "groq_api_key")
+        self.output_history = _dedupe_recent_paths(_settings_string_list(self.settings, "output_history"))
 
         self.source_mode_var = tk.StringVar(value="urls")
         self.input_dir_var = tk.StringVar()
         self.cookies_var = tk.StringVar(value=saved_cookies)
         self.api_key_var = tk.StringVar(value=saved_api_key)
-        self.output_var = tk.StringVar(value=str(Path.home() / "Documents" / "Lecture Transcripts"))
+        self.output_var = tk.StringVar(value=_default_output_dir())
         self.model_var = tk.StringVar(value=DEFAULT_MODEL)
         self.language_var = tk.StringVar(value="en")
         self.chunk_minutes_var = tk.IntVar(value=15)
@@ -143,7 +186,7 @@ class LectureTranscriberApp(tk.Tk):
             self._log("Saved cookies file was not found. Choose a new cookies file if the video requires one.")
 
     def _valid_saved_cookies(self) -> str:
-        saved_cookies = self.settings.get("cookies_file", "").strip()
+        saved_cookies = _settings_string(self.settings, "cookies_file").strip()
         if not saved_cookies:
             return ""
 
@@ -167,6 +210,11 @@ class LectureTranscriberApp(tk.Tk):
         elif job.urls:
             settings.pop("cookies_file", None)
 
+        output_dir = str(job.output_dir)
+        self.output_history = _dedupe_recent_paths([output_dir, *self.output_history])
+        settings["output_history"] = self.output_history
+        self._refresh_output_history()
+
         self.settings = settings
         _write_settings(settings)
 
@@ -177,6 +225,11 @@ class LectureTranscriberApp(tk.Tk):
     def _forget_saved_cookies(self) -> None:
         self.settings.pop("cookies_file", None)
         _write_settings(self.settings)
+
+    def _refresh_output_history(self) -> None:
+        output_box = getattr(self, "output_box", None)
+        if output_box is not None:
+            output_box.configure(values=tuple(self.output_history))
 
     def _build_styles(self) -> None:
         style = ttk.Style(self)
@@ -431,7 +484,12 @@ class LectureTranscriberApp(tk.Tk):
         self.reveal_button.grid(row=1, column=2, sticky="e")
 
         ttk.Label(fields, text="Output folder").grid(row=2, column=0, sticky="w", pady=4)
-        ttk.Entry(fields, textvariable=self.output_var).grid(row=2, column=1, sticky="ew", padx=(8, 6))
+        self.output_box = ttk.Combobox(
+            fields,
+            textvariable=self.output_var,
+            values=tuple(self.output_history),
+        )
+        self.output_box.grid(row=2, column=1, sticky="ew", padx=(8, 6))
         ttk.Button(fields, text="Browse", command=self._choose_output).grid(row=2, column=2, sticky="e")
 
         ttk.Label(fields, text="Model").grid(row=3, column=0, sticky="w", pady=4)

@@ -159,6 +159,7 @@ The output will be in `dist/`. `ffmpeg` still needs to be installed separately u
 - The app keeps Panopto downloads, but does not copy local source videos and does not keep chunk files.
 - Completed lectures are skipped on rerun when the same output folder and transcription settings are used.
 - The app remembers the last used cookies file and Groq API key in its user config file. If the saved cookies path is missing, it is forgotten and the field starts blank. If Groq rejects the saved API key, the key is forgotten so you can enter a new one.
+- The output folder defaults to `~/Documents/Lecture Transcripts`, and the output folder dropdown remembers the last 10 folders used for transcripts.
 - The saved API key is stored as plain text in the current user's config directory.
 
 ## References
