@@ -32,13 +32,27 @@ python -m pip install -r requirements.txt
 python -m lecture_transcriber
 ```
 
-After setup on Windows, you can launch the app by double-clicking:
+After setup, you can launch the app without activating the virtual environment or typing a Python command.
+
+On Windows, double-click:
 
 ```text
 Launch Lecture Transcriber.cmd
 ```
 
-The launcher uses `.venv` automatically and starts the GUI without requiring you to activate the environment or type a Python command. If `.venv` or the required Python packages are missing, it asks once whether to set up the app.
+On macOS, double-click:
+
+```text
+Launch Lecture Transcriber.command
+```
+
+The launchers use `.venv` automatically. If `.venv` or the required Python packages are missing, they ask once whether to set up the app. The macOS launcher also checks the standard Homebrew locations when looking for tools such as `ffmpeg`.
+
+If macOS reports that the launcher is not executable after downloading it, fix its permission once from Terminal:
+
+```bash
+chmod +x "Launch Lecture Transcriber.command"
+```
 
 On macOS or Linux:
 
